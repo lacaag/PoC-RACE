@@ -33,7 +33,6 @@ jobs:
           REPO_OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
         run: |
-          set -u
           BASE="https://api.github.com/repos/${GITHUB_REPOSITORY}"
           GQL="https://api.github.com/graphql"
           TS=$(date -u '+%Y%m%d_%H%M%S')
