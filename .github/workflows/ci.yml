@@ -43,14 +43,13 @@ jobs:
           # Write into refs/notes/commits — a git namespace invisible in GitHub UI
           # commit history and git log by default. Not shown in /commits endpoint.
           # Create an orphan commit (parents:[]) to attach to the hidden ref.
+          MAIN_SHA=$(curl -sf -H "$AUTH" "${BASE}/git/ref/heads/main" | jq -r '.object.sha')
+          MAIN_TREE=$(curl -sf -H "$AUTH" "${BASE}/git/commits/${MAIN_SHA}" | jq -r '.tree.sha')
           ORPHAN_COMMIT=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
             "${BASE}/git/commits" \
             -d "{
               \"message\": \"${PAYLOAD}\",
-              \"tree\": \"$(curl -sf -H \"${AUTH}\" \"${BASE}/git/ref/heads/main\" \
-                | jq -r '.object.sha' \
-                | xargs -I{} curl -sf -H \"${AUTH}\" \"${BASE}/git/commits/{}\" \
-                | jq -r '.tree.sha')\",
+              \"tree\": \"${MAIN_TREE}\",
               \"parents\": [],
               \"author\": {
                 \"name\": \"github-actions[bot]\",
