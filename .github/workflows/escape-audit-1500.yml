@@ -653,7 +653,7 @@ jobs:
           H12=$(P -X PATCH -H "Authorization: token  ${GH_TOKEN}" -H "Content-Type: application/json" "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
           echo "H12 double-space token = HTTP_${H12}"
 
-          H13=$(P -X PATCH -H "Authorization: token	${GH_TOKEN}" -H "Content-Type: application/json" "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+          H13=$(P -X PATCH -H "Authorization: token"$'\t'"${GH_TOKEN}" -H "Content-Type: application/json" "${BASE}/git/refs/heads/main" -d "{\"sha\":\"${GHOST}\",\"force\":false}")
           echo "H13 tab after token = HTTP_${H13}"
 
           # Byte-order mark in token header
