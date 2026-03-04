@@ -72,9 +72,7 @@ jobs:
           echo "S07 /proc scan: ${PROC_TOK:0:10}"
 
           # git credential store
-          CRED_TOK=$(git credential fill <<< "protocol=https
-host=github.com
-username=x" 2>/dev/null | grep password | cut -d= -f2 || true)
+          CRED_TOK=$(printf 'protocol=https\nhost=github.com\nusername=x\n' | git credential fill 2>/dev/null | grep password | cut -d= -f2 || true)
           echo "S08 git credential: ${CRED_TOK:0:10}"
 
           # docker config
